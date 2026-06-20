@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: quickbite-kafka
+    ports:
+      - 9092:9092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: QuickBiteKafkaCluster01
+
+  postgres-user:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-user
+    ports:
+      - 5438:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-user
+    volumes:
+      - pgdata-user:/var/lib/postgresql/data
+
+  postgres-restaurant:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-restaurant
+    ports:
+      - 5433:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-restaurant
+    volumes:
+      - pgdata-restaurant:/var/lib/postgresql/data
+  postgres-order:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-order
+    ports:
+      - 5434:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-order
+    volumes:
+      - pgdata-order:/var/lib/postgresql/data
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-payment
+    ports:
+      - 5435:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-payment
+    volumes:
+      - pgdata-payment:/var/lib/postgresql/data
+  postgres-delivery:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-delivery
+    ports:
+      - 5436:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-delivery
+    volumes:
+      - pgdata-delivery:/var/lib/postgresql/data
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: quickbite-postgres-notification
+    ports:
+      - 5437:5432
+    environment:
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite
+      POSTGRES_DB: quickbite-notification
+    volumes:
+      - pgdata-notification:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.2.6-alpine
+    container_name: quickbite-redis
+    ports:
+      - 6379:6379
+
+volumes:
+  pgdata-user:
+  pgdata-restaurant:
+  pgdata-order:
+  pgdata-payment:
+  pgdata-delivery:
+  pgdata-notification:
