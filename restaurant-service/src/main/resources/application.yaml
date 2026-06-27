@@ -36,3 +36,10 @@ management:
     web:
       exposure:
         include: health, info
+
+  # Version simplifiée pour les services qui ne font que recevoir
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/quickbite
