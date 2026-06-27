@@ -1,0 +1,127 @@
+{
+  "realm": "quickbite",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "CLIENT", "description": "Client qui passe commande" },
+      { "name": "RESTAURANT", "description": "Restaurateur qui gère son établissement" },
+      { "name": "DRIVER", "description": "Livreur qui effectue les livraisons" },
+      { "name": "ADMIN", "description": "Administrateur de la plateforme" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "quickbite-mobile",
+      "name": "QuickBite Mobile App",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "defaultClientScopes": ["openid", "profile", "email"]
+    },
+    {
+      "clientId": "order-svc",
+      "name": "Order Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "order-svc-secret"
+    },
+    {
+      "clientId": "restaurant-svc",
+      "name": "Restaurant Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "restaurant-svc-secret"
+    },
+    {
+      "clientId": "payment-svc",
+      "name": "Payment Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "payment-svc-secret"
+    },
+    {
+      "clientId": "delivery-svc",
+      "name": "Delivery Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "delivery-svc-secret"
+    },
+    {
+      "clientId": "user-svc",
+      "name": "User Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "user-svc-secret"
+    },
+    {
+      "clientId": "notification-svc",
+      "name": "Notification Service",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "secret": "notification-svc-secret"
+    }
+  ],
+  "users": [
+    {
+      "username": "client1",
+      "email": "client1@quickbite.com",
+      "enabled": true,
+      "firstName": "Jean",
+      "lastName": "Dupont",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["CLIENT"]
+    },
+    {
+      "username": "restaurant1",
+      "email": "restaurant1@quickbite.com",
+      "enabled": true,
+      "firstName": "Marie",
+      "lastName": "Martin",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["RESTAURANT"]
+    },
+    {
+      "username": "driver1",
+      "email": "driver1@quickbite.com",
+      "enabled": true,
+      "firstName": "Pierre",
+      "lastName": "Bernard",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["DRIVER"]
+    },
+    {
+      "username": "admin",
+      "email": "admin@quickbite.com",
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "QuickBite",
+      "credentials": [
+        { "type": "password", "value": "admin", "temporary": false }
+      ],
+      "realmRoles": ["ADMIN"]
+    }
+  ]
+}
