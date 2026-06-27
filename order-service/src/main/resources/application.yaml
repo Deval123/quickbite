@@ -28,6 +28,32 @@ spring:
       properties:
         spring.json.trusted.packages: "com.quickbite.*"
 
+  # ============================================
+  # OAUTH2 - JWT verification (Resource Server)
+  # ============================================
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/quickbite
+          # Spring telecharge auto la cle publique depuis:
+          # http://localhost:8180/realms/quickbite/protocol/openid-connect/certs
+
+      # ============================================
+      # OAUTH2 - Client Credentials (Service-to-Service)
+      # ============================================
+      client:
+        registration:
+          keycloak-service:
+            provider: keycloak
+            client-id: order-svc
+            client-secret: order-svc-secret
+            authorization-grant-type: client_credentials
+            scope: menu.read
+        provider:
+          keycloak:
+            token-uri: http://localhost:8180/realms/quickbite/protocol/openid-connect/token
+
 server:
   port: 8083
 
