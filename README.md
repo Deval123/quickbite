@@ -81,15 +81,109 @@ curl http://localhost:8080/actuator/gateway/routes
 curl -v http://localhost:8080/api/orders 2>&1 | grep X-Gateway
 ```
 
+## Tester l'authentification OAuth2 (Vidéo 3)
+
+### 1. Démarrer l'infrastructure (avec Keycloak)
+
+```bash
+# Lancer Docker (Kafka + PostgreSQL + Redis + Keycloak)
+docker compose up -d
+
+# Attendre que Keycloak démarre (30-60 sec), vérifier les logs :
+docker logs quickbite-keycloak --tail 5
+# Chercher : "Keycloak ... started in ... "
+```
+
+Accéder à la console admin : **http://localhost:8180** (login : `admin` / `admin`)  
+Vérifier que le realm **`quickbite`** existe.
+
+### 2. Obtenir un token utilisateur (Direct Access Grant)
+
+> En dev uniquement — en prod on utilise Authorization Code + PKCE.
+
+```bash
+ACCESS_TOKEN=$(curl -s -X POST \
+  http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=quickbite-mobile" \
+  -d "username=client1" \
+  -d "password=password" \
+  | jq -r '.access_token')
+
+echo $ACCESS_TOKEN
+```
+
+### 3. Décoder le JWT (sans vérifier la signature)
+
+```bash
+# Le payload est en base64 (2ème partie du token)
+echo $ACCESS_TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq .
+```
+
+Résultat attendu :
+```json
+{
+  "sub": "...",
+  "email": "client1@quickbite.com",
+  "realm_access": { "roles": ["CLIENT"] },
+  "exp": "...",
+  "iss": "http://localhost:8180/realms/quickbite"
+}
+```
+
+### 4. Appeler un service via le Gateway
+
+```bash
+# Requête authentifiée (doit retourner 200)
+curl -H "Authorization: Bearer $ACCESS_TOKEN" \
+  http://localhost:8080/api/orders
+
+# Requête sans token (doit retourner 401)
+curl -v http://localhost:8080/api/orders
+
+# Requête avec token invalide (doit retourner 401)
+curl -H "Authorization: Bearer invalid-token" \
+  http://localhost:8080/api/orders
+```
+
+### 5. Obtenir un token service-à-service (Client Credentials)
+
+```bash
+SVC_TOKEN=$(curl -s -X POST \
+  http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=order-svc" \
+  -d "client_secret=order-svc-secret" \
+  | jq -r '.access_token')
+
+# Décoder — le claim "azp" doit valoir "order-svc"
+echo $SVC_TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq .
+```
+
+### 6. Vérifier les endpoints Keycloak
+
+```bash
+# Configuration auto-découverte (utilisée par Spring)
+curl -s http://localhost:8180/realms/quickbite/.well-known/openid-configuration | jq .
+
+# Clés publiques JWKS (utilisées par les services pour vérifier les tokens)
+curl -s http://localhost:8180/realms/quickbite/protocol/openid-connect/certs | jq .
+```
+
+---
+
 ## Stack technique
 
-| Technologie | Usage |
-|-------------|-------|
-| Spring Boot 3.x | Framework microservices |
-| Spring Cloud Gateway 5.x | API Gateway + Rate Limiting |
-| Spring Data JPA | Persistance |
-| PostgreSQL | Base de données (une par service) |
-| Redis | Rate limiting du Gateway |
-| Apache Kafka | Messaging asynchrone |
-| Docker Compose | Infrastructure locale |
-| Maven multi-module | Build |
+| Technologie               | Usage                              |
+|---------------------------|------------------------------------|
+| Spring Boot 3.x           | Framework microservices            |
+| Spring Cloud Gateway 5.x  | API Gateway + Rate Limiting        |
+| Spring Data JPA           | Persistance                        |
+| PostgreSQL                | Base de données (une par service)  |
+| Redis                     | Rate limiting du Gateway           |
+| Apache Kafka              | Messaging asynchrone               |
+| Keycloak                  | Identity Provider OAuth2 / OIDC    |
+| Docker Compose            | Infrastructure locale              |
+| Maven multi-module        | Build                              |
