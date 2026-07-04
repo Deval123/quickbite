@@ -6,8 +6,8 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 
 - [x] Video 1 : Decomposition en microservices (tag `v1.0`)
 - [x] Video 2 : API Gateway (tag `v2.0`)
-- [ ] Video 3 : Authentification OAuth2
-- [ ] Video 4 : Service Discovery
+- [x] Video 3 : Authentification OAuth2 (tag `v3.0`)
+- [x] Video 4 : Database per Service + Flyway + JPA (tag `v4.0`)
 - [ ] Video 5 : Communication inter-services (Kafka)
 - [ ] Video 6 : Observabilité (Prometheus / Grafana)
 
@@ -170,6 +170,101 @@ curl -s http://localhost:8180/realms/quickbite/.well-known/openid-configuration 
 
 # Clés publiques JWKS (utilisées par les services pour vérifier les tokens)
 curl -s http://localhost:8180/realms/quickbite/protocol/openid-connect/certs | jq .
+```
+
+---
+
+## Vérifier la persistance - Database per Service (Vidéo 4)
+
+### 1. Vérifier que les 5 PostgreSQL sont UP
+
+```bash
+docker compose ps
+```
+
+### 2. Démarrer les services (Flyway s'exécute au démarrage)
+
+```bash
+cd user-service       && mvn spring-boot:run &
+cd restaurant-service  && mvn spring-boot:run &
+cd order-service       && mvn spring-boot:run &
+cd payment-service     && mvn spring-boot:run &
+cd delivery-service    && mvn spring-boot:run &
+```
+
+Dans les logs, chercher :
+```
+Flyway ... Successfully applied N migrations
+```
+
+### 3. Vérifier les tables de chaque base — isolation totale
+
+Chaque service a sa propre base PostgreSQL et ne voit **que** ses propres tables.
+
+```bash
+docker exec -it quickbite-postgres-user psql -U quickbite -d quickbite-user -c "\dt"
+```
+```
+ Schema |         Name          | Type  |   Owner
+--------+-----------------------+-------+-----------
+ public | flyway_schema_history | table | quickbite
+ public | users                 | table | quickbite
+```
+
+```bash
+docker exec -it quickbite-postgres-restaurant psql -U quickbite -d quickbite-restaurant -c "\dt"
+```
+```
+ Schema |         Name          | Type  |   Owner
+--------+-----------------------+-------+-----------
+ public | flyway_schema_history | table | quickbite
+ public | menu_items            | table | quickbite
+ public | restaurants           | table | quickbite
+```
+
+```bash
+docker exec -it quickbite-postgres-order psql -U quickbite -d quickbite-order -c "\dt"
+```
+```
+ Schema |         Name          | Type  |   Owner
+--------+-----------------------+-------+-----------
+ public | flyway_schema_history | table | quickbite
+ public | order_items           | table | quickbite
+ public | orders                | table | quickbite
+```
+
+```bash
+docker exec -it quickbite-postgres-delivery psql -U quickbite -d quickbite-delivery -c "\dt"
+```
+```
+ Schema |         Name          | Type  |   Owner
+--------+-----------------------+-------+-----------
+ public | deliveries            | table | quickbite
+ public | flyway_schema_history | table | quickbite
+```
+
+`quickbite-postgres-payment` suit le même principe (table `payments` + `flyway_schema_history`).
+
+### 4. Vérifier les migrations Flyway appliquées
+
+```bash
+docker exec -it quickbite-postgres-order psql -U quickbite -d quickbite-order \
+  -c "SELECT version, description, success FROM flyway_schema_history;"
+```
+
+Résultat attendu (order-service) :
+```
+ version |      description       | success
+---------+-------------------------+---------
+ 1       | create orders table     | t
+ 2       | create order items table| t
+ 3       | add status index        | t
+```
+
+### 5. Vérifier via l'API Actuator
+
+```bash
+curl -s http://localhost:8083/actuator/flyway | jq .
 ```
 
 ---
