@@ -6,7 +6,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 
 - [x] Video 1 : Decomposition en microservices (tag `v1.0`)
 - [x] Video 2 : API Gateway (tag `v2.0`)
-- [ ] Video 3 : Authentification OAuth2
+- [x] Video 3 : Authentification OAuth2 (tag `v3.0`)
 - [ ] Video 4 : Service Discovery
 - [ ] Video 5 : Communication inter-services (Kafka)
 - [ ] Video 6 : Observabilité (Prometheus / Grafana)
