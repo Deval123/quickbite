@@ -26,7 +26,7 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
-        spring.json.trusted.packages: "com.quickbite.*"
+        spring.json.trusted.packages: "com.devalere.quickbite.*"
 
       # ============================================
       # FLYWAY
@@ -35,6 +35,15 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+
+  # ============================================
+  # SECURITE OAuth2 (JWT Keycloak)
+  # ============================================
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/quickbite
 
 server:
   port: 8085
@@ -45,9 +54,9 @@ management:
       exposure:
         include: health, info
 
-  # Version simplifiée pour les services qui ne font que recevoir
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://localhost:8180/realms/quickbite
+      # ============================================
+      # GRPC
+      # ============================================
+grpc:
+  server:
+    port: 9001

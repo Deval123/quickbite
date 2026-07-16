@@ -66,6 +66,12 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- gRPC Server -->
+        <dependency>
+            <groupId>net.devh</groupId>
+            <artifactId>grpc-server-spring-boot-starter</artifactId>
+            <version>3.1.0.RELEASE</version>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -100,6 +106,12 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.devalere.quickbite</groupId>
+            <artifactId>shared-kernel</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
 
