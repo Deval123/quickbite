@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package com.devalere.quickbite.proto;
+
+option java_multiple_files = true;
+option java_package = "com.devalere.quickbite.grpc.restaurant";
+option java_outer_classname = "RestaurantProto";
+
+// Service gRPC pour communication interne Order -> Restaurant.
+service RestaurantService {
+
+  // Recuperer les items du menu d'un restaurant.
+  rpc GetMenuItems (GetMenuItemsRequest) returns (GetMenuItemsResponse);
+
+  // Verifier la disponibilite d'items specifiques.
+  rpc CheckItemsAvailability (CheckItemsRequest) returns (CheckItemsResponse);
+}
+
+message GetMenuItemsRequest {
+  string restaurant_id = 1; // UUID du restaurant pour lequel recuperer le menu.
+}
+
+message GetMenuItemsResponse {
+  string restaurant_id = 1;
+  repeated MenuItemProto items = 2;
+}
+
+message MenuItemProto {
+  string id = 1;
+  string name = 2;
+  double price = 3;
+  bool available = 4;
+  string category = 5;
+}
+
+message CheckItemsRequest {
+  string restaurant_id = 1;
+  repeated string item_ids = 2;
+}
+
+message CheckItemsResponse {
+  bool all_available = 1;
+  repeated ItemAvailability items = 2;
+}
+
+message ItemAvailability {
+  string item_id = 1;
+  bool available = 2;
+  double price = 3;
+  string name = 4;
+}
