@@ -1,7 +1,11 @@
 spring:
   application:
     name: gateway-service
-
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/quickbite
   # ============================================
   # REDIS (pour le rate limiting)
   # ============================================
@@ -138,3 +142,4 @@ logging:
   level:
     org.springframework.cloud.gateway: DEBUG
     org.springframework.cloud.gateway.route.RouteDefinitionLocator: INFO
+

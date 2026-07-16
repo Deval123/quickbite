@@ -21,7 +21,7 @@
       "directAccessGrantsEnabled": true,
       "redirectUris": ["http://localhost:3000/*"],
       "webOrigins": ["http://localhost:3000"],
-      "defaultClientScopes": ["openid", "profile", "email"]
+      "defaultClientScopes": ["openid", "profile", "email", "roles"]
     },
     {
       "clientId": "order-svc",
@@ -85,6 +85,17 @@
       "enabled": true,
       "firstName": "Jean",
       "lastName": "Dupont",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["CLIENT"]
+    },
+    {
+      "username": "client2",
+      "email": "client2@quickbite.com",
+      "enabled": true,
+      "firstName": "Sophie",
+      "lastName": "Leclerc",
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],

@@ -72,6 +72,12 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Shared Kernel (securite, DTOs, Kafka headers) -->
+        <dependency>
+            <groupId>com.devalere.quickbite</groupId>
+            <artifactId>shared-kernel</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator-test</artifactId>
