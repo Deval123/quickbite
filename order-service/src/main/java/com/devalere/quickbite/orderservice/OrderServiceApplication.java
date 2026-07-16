@@ -3,7 +3,7 @@ package com.devalere.quickbite.orderservice;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.devalere.quickbite")
 public class OrderServiceApplication
 {
 

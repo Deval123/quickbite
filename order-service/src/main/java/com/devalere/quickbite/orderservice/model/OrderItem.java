@@ -1,4 +1,4 @@
-package com.devalere.quickbite.orderservice.MODEL;
+package com.devalere.quickbite.orderservice.model;
 
 import jakarta.persistence.*;
 import java.math.BigDecimal;

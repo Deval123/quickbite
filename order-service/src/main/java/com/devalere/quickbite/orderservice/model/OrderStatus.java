@@ -1,4 +1,4 @@
-package com.devalere.quickbite.orderservice.MODEL;
+package com.devalere.quickbite.orderservice.model;
 
 public enum OrderStatus
 {

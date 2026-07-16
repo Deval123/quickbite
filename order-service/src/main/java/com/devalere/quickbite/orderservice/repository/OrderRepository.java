@@ -1,8 +1,8 @@
 package com.devalere.quickbite.orderservice.repository;
 
 
-import com.devalere.quickbite.orderservice.MODEL.Order;
-import com.devalere.quickbite.orderservice.MODEL.OrderStatus;
+import com.devalere.quickbite.orderservice.model.Order;
+import com.devalere.quickbite.orderservice.model.OrderStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

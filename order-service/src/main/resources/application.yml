@@ -33,7 +33,7 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
-        spring.json.trusted.packages: "com.quickbite.*"
+        spring.json.trusted.packages: "com.devalere.quickbite.*"
 
   # ============================================
   # OAUTH2 - JWT verification (Resource Server)
@@ -77,3 +77,12 @@ management:
     web:
       exposure:
         include: health, info
+
+      # ============================================
+      # GRPC CLIENT - RESTAURANT SERVICE
+      # ============================================
+grpc:
+  client:
+    restaurant-service:
+      address: static://localhost:9001
+      negotiation-type: plaintext
