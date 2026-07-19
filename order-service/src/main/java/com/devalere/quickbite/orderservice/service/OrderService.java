@@ -8,12 +8,18 @@ import com.devalere.quickbite.orderservice.repository.OrderRepository;
 import com.devalere.quickbite.dto.CreateOrderRequest;
 import com.devalere.quickbite.dto.OrderItemRequest;
 import com.devalere.quickbite.dto.OrderResponse;
+import com.devalere.quickbite.events.OrderCreatedEvent;
+import com.devalere.quickbite.events.OrderItemData;
 import com.devalere.quickbite.grpc.restaurant.CheckItemsResponse;
 import com.devalere.quickbite.grpc.restaurant.ItemAvailability;
+import com.devalere.quickbite.orderservice.kafka.OrderEventProducer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,13 +29,18 @@ import java.util.stream.Collectors;
 @Service
 public class OrderService {
 
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
     private final OrderRepository orderRepository;
     private final RestaurantGrpcClient restaurantGrpcClient;
+    private final OrderEventProducer orderEventProducer;
 
     public OrderService(OrderRepository orderRepository,
-            RestaurantGrpcClient restaurantGrpcClient) {
+            RestaurantGrpcClient restaurantGrpcClient,
+            OrderEventProducer orderEventProducer) {
         this.orderRepository = orderRepository;
         this.restaurantGrpcClient = restaurantGrpcClient;
+        this.orderEventProducer = orderEventProducer;
     }
 
     @Transactional
@@ -91,6 +102,27 @@ public class OrderService {
         order.setTotalAmount(total);
 
         Order saved = orderRepository.save(order);
+
+        // 4. Publier l'event Kafka (apres le save pour garantir la persistance)
+        List<OrderItemData> eventItems = orderItems.stream()
+                .map(item -> new OrderItemData(
+                        item.getMenuItemId().toString(),
+                        item.getMenuItemName(),
+                        item.getQuantity(),
+                        item.getUnitPrice()))
+                .toList();
+
+        OrderCreatedEvent event = new OrderCreatedEvent(
+                saved.getId().toString(),
+                userId,
+                request.restaurantId(),
+                eventItems,
+                saved.getTotalAmount(),
+                request.deliveryAddress(),
+                Instant.now());
+
+        orderEventProducer.publishOrderCreated(event);
+        log.info("OrderCreatedEvent publie pour orderId={}", saved.getId());
 
         return toResponse(saved);
     }
