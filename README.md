@@ -9,8 +9,9 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 3 : Authentification OAuth2 (tag `v3.0`)
 - [x] Video 4 : Database per Service + Flyway + JPA (tag `v4.0`)
 - [x] Video 5 : REST externe + gRPC interne (tag `v5.0`)
-- [ ] Video 6 : CQRS
-- [ ] Video 7 : Event Sourcing
+- [x] Video 6 : Communication asynchrone - Events et Kafka (tag `v6.0`)
+- [ ] Video 7 : CQRS
+- [ ] Video 8 : Event Sourcing
 
 ## Architecture
 
@@ -547,6 +548,133 @@ GET    /api/restaurants/{id}    |  200   |    200     |  200   |  200  |    401
 | payment-service     | 8086  | —    |
 | delivery-service    | 8088  | —    |
 | notification-service| 8087  | —    |
+
+---
+
+## Tester Kafka - Communication asynchrone (Video 6)
+
+### 1. Verifier que Kafka est UP
+
+```bash
+docker compose ps | grep kafka
+# → quickbite-kafka doit etre "running" sur le port 9092
+```
+
+### 2. Lister les topics Kafka
+
+```bash
+docker exec quickbite-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 --list
+```
+
+Resultat attendu (5 topics) :
+```
+delivery-events
+notification-events
+order-events
+payment-events
+restaurant-events
+```
+
+### 3. Verifier les details d'un topic
+
+```bash
+docker exec quickbite-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --topic order-events
+```
+
+Resultat attendu :
+```
+Topic: order-events  PartitionCount: 3  ReplicationFactor: 1
+```
+
+### 4. Publier un event (creer une commande)
+
+```bash
+# Obtenir un token client (si pas deja fait)
+TOKEN_CLIENT=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=quickbite-mobile" \
+  -d "username=client1" \
+  -d "password=password" | jq -r .access_token)
+
+# Creer une commande → declenche OrderCreatedEvent sur order-events
+curl -s -X POST http://localhost:8083/api/orders \
+  -H "Authorization: Bearer $TOKEN_CLIENT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "restaurantId": "a1b2c3d4-0001-4000-8000-000000000002",
+    "items": [
+      {"menuItemId": "b1b2c3d4-0002-4000-8000-000000000001", "quantity": 2},
+      {"menuItemId": "b1b2c3d4-0002-4000-8000-000000000003", "quantity": 1}
+    ],
+    "deliveryAddress": "10 Rue de Rivoli, 75001 Paris"
+  }' | jq
+```
+
+### 5. Lire les events dans un topic
+
+```bash
+# Lire les messages du topic order-events (timeout 5 sec pour ne pas bloquer)
+docker exec quickbite-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic order-events \
+  --from-beginning \
+  --max-messages 5
+```
+
+> **Astuce** : sans `--timeout-ms`, le consumer reste bloque indefiniment en attente de nouveaux messages. Ajouter `--timeout-ms 5000` pour qu'il s'arrete apres 5 secondes d'inactivite.
+
+### 6. Verifier les consumer groups
+
+```bash
+# Lister tous les consumer groups
+docker exec quickbite-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --list
+
+# Details d'un group (lag, partitions, offsets)
+  docker exec quickbite-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --group payment-group
+```
+
+Resultat attendu (5 consumer groups) :
+```
+delivery-group
+notification-group
+order-group
+payment-group
+restaurant-group
+```
+
+### 7. Verifier dans les logs des services
+
+```bash
+# order-service : doit afficher "OrderCreatedEvent publie pour orderId=..."
+# payment-service : doit afficher "Payment recu event: OrderCreatedEvent pour orderId=..."
+# restaurant-service : doit afficher "Restaurant recu event OrderCreatedEvent pour orderId=..."
+# notification-service : doit afficher "Email: 'Votre commande ... a ete creee'"
+```
+
+### Architecture Kafka QuickBite
+
+```
+                    ┌──────────────┐
+                    │ order-service │
+                    │  (Producer)  │
+                    └──────┬───────┘
+                           │ OrderCreatedEvent
+                           ▼
+                    ┌──────────────┐
+                    │ order-events │  (3 partitions, cle = orderId)
+                    └──┬────┬────┬─┘
+                       │    │    │
+          ┌────────────┘    │    └────────────┐
+          ▼                 ▼                 ▼
+   payment-group    restaurant-group   notification-group
+   (PaymentSvc)     (RestaurantSvc)    (NotificationSvc)
+```
 
 ---
 
