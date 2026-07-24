@@ -1,10 +1,13 @@
 package com.devalere.quickbite.orderservice.kafka;
 
+import com.devalere.quickbite.events.DeliveryAssignedEvent;
+import com.devalere.quickbite.events.OrderReadyEvent;
 import com.devalere.quickbite.events.PaymentCompletedEvent;
 import com.devalere.quickbite.events.PaymentFailedEvent;
 import com.devalere.quickbite.events.OrderConfirmedEvent;
 import com.devalere.quickbite.events.DeliveryCompletedEvent;
 import com.devalere.quickbite.kafka.KafkaTopics;
+import com.devalere.quickbite.orderservice.saga.OrderSagaOrchestrator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +26,11 @@ public class OrderEventConsumer {
     private static final Logger log = LoggerFactory.getLogger(OrderEventConsumer.class);
 
     private final ObjectMapper objectMapper;
+    private final OrderSagaOrchestrator orchestrator;
 
-    public OrderEventConsumer(ObjectMapper objectMapper) {
+    public OrderEventConsumer(ObjectMapper objectMapper, OrderSagaOrchestrator orchestrator) {
         this.objectMapper = objectMapper;
+        this.orchestrator = orchestrator;
     }
 
     @KafkaListener(topics = KafkaTopics.PAYMENT_EVENTS, groupId = "order-group")
@@ -36,12 +41,10 @@ public class OrderEventConsumer {
         try {
             if ("PaymentCompletedEvent".equals(eventType)) {
                 var event = objectMapper.readValue(record.value(), PaymentCompletedEvent.class);
-                // TODO: orderService.updateStatus(event.orderId(), OrderStatus.PAYMENT_CONFIRMED);
-                log.info("Commande {} : paiement confirme ({})", event.orderId(), event.transactionRef());
+                orchestrator.onPaymentCompleted(event);
             } else if ("PaymentFailedEvent".equals(eventType)) {
                 var event = objectMapper.readValue(record.value(), PaymentFailedEvent.class);
-                // TODO: orderService.updateStatus(event.orderId(), OrderStatus.CANCELLED);
-                log.info("Commande {} : paiement echoue ({})", event.orderId(), event.failureReason());
+                orchestrator.onPaymentFailed(event);
             }
         } catch (Exception e) {
             log.error("Erreur traitement payment event: {}", e.getMessage());
@@ -56,9 +59,12 @@ public class OrderEventConsumer {
         try {
             if ("OrderConfirmedEvent".equals(eventType)) {
                 var event = objectMapper.readValue(record.value(), OrderConfirmedEvent.class);
-                // TODO: orderService.updateStatus(event.orderId(), OrderStatus.CONFIRMED);
+                orchestrator.onOrderConfirmed(event);
                 log.info("Commande {} : confirmee par restaurant, prep ~{} min",
                         event.orderId(), event.estimatePreparationMinutes());
+            } else if ("OrderReadyEvent".equals(eventType)) {
+                var event = objectMapper.readValue(record.value(), OrderReadyEvent.class);
+                orchestrator.onOrderReady(event);
             }
         } catch (Exception e) {
             log.error("Erreur traitement restaurant event: {}", e.getMessage());
@@ -71,10 +77,13 @@ public class OrderEventConsumer {
         log.info("Order recu event livraison: {} pour orderId={}", eventType, record.key());
 
         try {
-            if ("DeliveryCompletedEvent".equals(eventType)) {
+            if ("DeliveryAssignedEvent".equals(eventType)) {
+                var event = objectMapper.readValue(record.value(), DeliveryAssignedEvent.class);
+                orchestrator.onDeliveryAssigned(event);
+                log.info("Commande {} : livrée par driver {}", event.orderId(), event.driverId());
+            } else if ("DeliveryCompletedEvent".equals(eventType)) {
                 var event = objectMapper.readValue(record.value(), DeliveryCompletedEvent.class);
-                // TODO: orderService.updateStatus(event.orderId(), OrderStatus.DELIVERED);
-                log.info("Commande {} : livree par driver {}", event.orderId(), event.driverId());
+                orchestrator.onDeliveryCompleted(event);
             }
         } catch (Exception e) {
             log.error("Erreur traitement delivery event: {}", e.getMessage());

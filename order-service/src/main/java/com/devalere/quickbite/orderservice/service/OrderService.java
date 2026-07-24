@@ -62,7 +62,7 @@ public class OrderService {
             throw new RuntimeException("Items unavailable: " + unavailable);
         }
 
-        // 2. Construire les mappings itemId -> price / name depuis la reponse gRPC
+        // 2. Construire les mappings itemId → price / name depuis la réponse gRPC
         Map<String, Double> priceMap = grpcResponse.getItemsList().stream()
                 .collect(Collectors.toMap(
                         ItemAvailability::getItemId,
@@ -103,7 +103,7 @@ public class OrderService {
 
         Order saved = orderRepository.save(order);
 
-        // 4. Publier l'event Kafka (apres le save pour garantir la persistance)
+        // 4. Publier l'évent Kafka (apres le save pour garantir la persistance)
         List<OrderItemData> eventItems = orderItems.stream()
                 .map(item -> new OrderItemData(
                         item.getMenuItemId().toString(),
@@ -123,6 +123,11 @@ public class OrderService {
 
         orderEventProducer.publishOrderCreated(event);
         log.info("OrderCreatedEvent publie pour orderId={}", saved.getId());
+
+        // 5. Passer en PAYMENT_PENDING (la Saga démarre)
+        saved.setStatus(OrderStatus.PAYMENT_PENDING);
+        orderRepository.save(saved);
+        log.info("Commande {} en attente de paiement -> PAYMENT_PENDING", saved.getId());
 
         return toResponse(saved);
     }
