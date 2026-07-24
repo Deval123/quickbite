@@ -10,8 +10,9 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 4 : Database per Service + Flyway + JPA (tag `v4.0`)
 - [x] Video 5 : REST externe + gRPC interne (tag `v5.0`)
 - [x] Video 6 : Communication asynchrone - Events et Kafka (tag `v6.0`)
-- [ ] Video 7 : CQRS
-- [ ] Video 8 : Event Sourcing
+- [x] Video 7 : Le flux de commande - Saga orchestree (tag `v7.0`)
+- [ ] Video 8 : Paiement - Idempotence et webhooks Stripe
+- [ ] Video 9 : Cache distribue - Redis
 
 ## Architecture
 
@@ -674,6 +675,114 @@ restaurant-group
           ▼                 ▼                 ▼
    payment-group    restaurant-group   notification-group
    (PaymentSvc)     (RestaurantSvc)    (NotificationSvc)
+```
+
+---
+
+## Tester la Saga - Flux de commande (Video 7)
+
+### 1. State machine de la commande
+
+```
+CREATED -> PAYMENT_PENDING -> CONFIRMED -> PREPARING -> READY -> PICKED_UP -> DELIVERED
+                |                 |
+                v                 v
+           CANCELLED          CANCELLED
+         (paiement KO)     (restaurant refuse)
+```
+
+### 2. Creer une commande (declenche la Saga)
+
+```bash
+# Token client
+TOKEN_CLIENT=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=quickbite-mobile" \
+  -d "username=client1" \
+  -d "password=password" | jq -r .access_token)
+
+# Creer la commande
+ORDER_ID=$(curl -s -X POST http://localhost:8083/api/orders \
+  -H "Authorization: Bearer $TOKEN_CLIENT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "restaurantId": "a1b2c3d4-0001-4000-8000-000000000002",
+    "items": [
+      {"menuItemId": "b1b2c3d4-0002-4000-8000-000000000001", "quantity": 2}
+    ],
+    "deliveryAddress": "10 Rue de Rivoli, 75001 Paris"
+  }' | jq -r '.id')
+echo "Order cree : $ORDER_ID"
+```
+
+### 3. Verifier le statut (doit etre PAYMENT_PENDING)
+
+```bash
+curl -s http://localhost:8083/api/orders/$ORDER_ID \
+  -H "Authorization: Bearer $TOKEN_CLIENT" | jq '.status'
+# -> "PAYMENT_PENDING"
+```
+
+### 4. Verifier le flux dans les logs
+
+```bash
+# order-service :
+#   "OrderCreatedEvent publie pour orderId=..."
+#   "Commande ... en attente de paiement -> PAYMENT_PENDING"
+
+# payment-service :
+#   "Payment recu event: OrderCreatedEvent pour orderId=..."
+
+# restaurant-service :
+#   "Restaurant recu event OrderCreatedEvent pour orderId=..."
+
+# notification-service :
+#   "Email: 'Votre commande ... a ete creee'"
+```
+
+### 5. Lire les events et consumer grougs Kafka
+
+```bash
+# Lire les events Kafka
+docker exec -it quickbite-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic order-events \
+  --from-beginning \
+  --timeout-ms 5000
+  
+# Verifier les consumer groups  
+docker exec quickbite-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --list
+```
+
+### 6. Verifier la compensation (timeout)
+
+> Les commandes en PAYMENT_PENDING depuis plus de 5 min sont automatiquement annulees par le `SagaTimeoutScheduler`.
+
+```bash
+# Attendre 5+ min, puis verifier le statut
+curl -s http://localhost:8083/api/orders/$ORDER_ID \
+  -H "Authorization: Bearer $TOKEN_CLIENT" | jq '.status'
+# -> "CANCELLED" (si le PaymentService n'a pas repondu)
+```
+
+### Architecture Saga orchestree
+
+```
+               OrderService
+              (Orchestrateur)
+             /      |       \
+            v       v        v
+    PaymentSvc  RestaurantSvc  DeliverySvc
+        |           |             |
+        v           v             v
+  payment-events  restaurant-events  delivery-events
+        \           |             /
+         \          |            /
+          v         v           v
+         OrderEventConsumer (order-group)
+              -> met a jour le statut
+              -> compense si echec
 ```
 
 ---
