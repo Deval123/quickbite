@@ -6,6 +6,7 @@ import com.devalere.quickbite.orderservice.model.OrderStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -28,4 +29,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
      * Trouver les commandes en cours d'un utilisateur.
      */
     List<Order> findByUserIdAndStatusIn(String userId, List<OrderStatus> statuses);
+
+    /**
+     * Trouver les commandes bloquees depuis plus de X minutes.
+     */
+    List<Order> findByStatusAndCreatedAtBefore(OrderStatus status, LocalDateTime cutoff);
 }
