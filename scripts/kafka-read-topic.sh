@@ -7,7 +7,7 @@ TOPIC=${1:-order-events}
 TIMEOUT=${2:-5000}
 
 echo "=== Lecture du topic '$TOPIC' (timeout ${TIMEOUT}ms) ==="
-docker exec -it quickbite-kafka kafka-console-consumer \
+docker exec -it quickbite-kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
   --topic "$TOPIC" \
   --from-beginning \
