@@ -37,6 +37,13 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  # Version simplifiée pour les services qui ne font que recevoir
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/quickbite
+
 server:
   port: 8086
 
@@ -46,9 +53,7 @@ management:
       exposure:
         include: health, info
 
-  # Version simplifiée pour les services qui ne font que recevoir
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://localhost:8180/realms/quickbite
+# Stripe
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET}
