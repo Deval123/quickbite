@@ -12,7 +12,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 6 : Communication asynchrone - Events et Kafka (tag `v6.0`)
 - [x] Video 7 : Le flux de commande - Saga orchestree (tag `v7.0`)
 - [x] Video 8 : Paiement - Idempotence et webhooks Stripe (tag `v8.0`)
-- [ ] Video 9 : Cache distribue - Redis
+- [x] Video 9 : Cache distribue - Redis (tag `v9.0`)
 
 ## Architecture
 
@@ -925,6 +925,139 @@ Stripe -> Webhook POST /api/webhooks/stripe -> PaymentService
 - **Idempotency-Key** : chaque appel Stripe porte `order_pay_{orderId}`, pas de double PaymentIntent
 - **Deduplication webhook** : le `stripeEventId` est stocke en base, les doublons sont ignores
 - **Compensation** : si la Saga echoue apres paiement, on appelle `PaymentIntent.cancel()` (pas de refund)
+
+---
+
+## Video 9 : Cache distribue - Redis
+
+### 1. Pre-requis
+
+```bash
+# Infrastructure (Redis deja inclus dans docker-compose)
+docker compose up -d
+
+# Verifier que Redis est UP
+docker exec quickbite-redis redis-cli PING
+# -> PONG
+
+# Lancer le restaurant-service
+cd restaurant-service && mvn spring-boot:run
+```
+
+### 2. Obtenir un token
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -d "grant_type=password&client_id=quickbite-mobile&username=client1&password=password" \
+  | jq -r '.access_token')
+```
+
+### 3. Tester le cache (Cache-Aside Pattern)
+
+```bash
+# Vider le cache Redis
+docker exec quickbite-redis redis-cli FLUSHDB
+
+# Premier appel : CACHE MISS (log "CACHE MISS - Chargement menu depuis PostgreSQL")
+curl -s http://localhost:8085/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items \
+  -H "Authorization: Bearer $TOKEN" | jq '.[].name'
+
+# Deuxieme appel : CACHE HIT (aucun log PostgreSQL, reponse plus rapide)
+curl -s http://localhost:8085/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items \
+  -H "Authorization: Bearer $TOKEN" | jq '.[].name'
+```
+
+### 4. Verifier dans Redis
+
+```bash
+# Lister les cles
+docker exec quickbite-redis redis-cli KEYS "quickbite:*"
+# -> "quickbite:menus::a1b2c3d4-0001-4000-8000-000000000002"
+
+# Voir le contenu du cache (JSON avec @class pour le typage)
+docker exec quickbite-redis redis-cli GET "quickbite:menus::a1b2c3d4-0001-4000-8000-000000000002"
+
+# Voir le TTL restant (300 secondes = 5 min)
+docker exec quickbite-redis redis-cli TTL "quickbite:menus::a1b2c3d4-0001-4000-8000-000000000002"
+```
+
+### 5. Tester l'invalidation (@CacheEvict + Kafka)
+
+```bash
+# Verifier que le cache existe
+docker exec quickbite-redis redis-cli EXISTS "quickbite:menus::a1b2c3d4-0001-4000-8000-000000000002"
+# -> 1
+
+# Modifier un item du menu (declenche @CacheEvict + MenuUpdatedEvent sur Kafka)
+curl -s -X PUT http://localhost:8085/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items/b1b2c3d4-0002-4000-8000-000000000001 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Tonkotsu Ramen Special",
+    "price": 16.50,
+    "description": "Bouillon porc 14h, double chashu, oeuf mollet, nori, truffe",
+    "available": true
+  }' | jq .
+
+# Verifier que le cache a ete invalide
+docker exec quickbite-redis redis-cli EXISTS "quickbite:menus::a1b2c3d4-0001-4000-8000-000000000002"
+# -> 0 (cache vide)
+
+# Prochain appel : CACHE MISS (reconstruit avec les nouvelles donnees)
+curl -s http://localhost:8085/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items \
+  -H "Authorization: Bearer $TOKEN" | jq '.[0]'
+```
+
+### 6. Tester le stampede protection (sync=true)
+
+```bash
+# Vider le cache
+docker exec quickbite-redis redis-cli FLUSHDB
+
+# Envoyer 50 requetes simultanees (seule la premiere ira en DB)
+for i in $(seq 1 50); do
+  curl -s http://localhost:8085/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items \
+    -H "Authorization: Bearer $TOKEN" -o /dev/null &
+done
+wait
+
+# Verifier les logs : UN SEUL "CACHE MISS - Chargement menu depuis PostgreSQL"
+# Les 49 autres ont attendu le lock et lu le cache
+```
+
+### 7. Verifier les logs
+
+```bash
+# restaurant-service :
+#   Premier GET  : "CACHE MISS - Chargement menu depuis PostgreSQL pour restaurant a1b2c3d4-..."
+#   Deuxieme GET : (rien — cache hit, pas de log)
+#   PUT          : "Menu item modifie: b1b2c3d4-... pour restaurant a1b2c3d4-..."
+#                  "MenuUpdatedEvent publie pour restaurant a1b2c3d4-..."
+#   GET apres PUT: "CACHE MISS - Chargement menu depuis PostgreSQL pour restaurant a1b2c3d4-..."
+```
+
+### Points cles - Architecture Cache Redis
+
+```
+Client -> RestaurantService -> @Cacheable -> Redis (quickbite:menus::{id})
+                                  |
+                              CACHE HIT ? -> retourne le JSON depuis Redis
+                              CACHE MISS ? -> PostgreSQL -> stocke dans Redis -> retourne
+                                  |
+                             sync=true (lock JVM pour eviter le stampede)
+
+PUT /menu-items/{id} -> @CacheEvict -> supprime quickbite:menus::{restaurantId}
+                             |
+                        MenuUpdatedEvent -> Kafka (restaurant-events)
+                             |
+                        MenuCacheInvalidator -> @CacheEvict (autres instances)
+```
+
+- **Cache-Aside** : l'application controle le cache, pas la DB
+- **TTL 5 min** : filet de securite, meme si l'invalidation echoue
+- **sync=true** : un seul thread reconstruit le cache (stampede protection)
+- **Invalidation event-driven** : Kafka propage l'invalidation a toutes les instances
+- **Serialisation JSON** : GenericJacksonJsonRedisSerializer avec default typing (@class)
 
 ---
 
