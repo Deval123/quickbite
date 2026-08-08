@@ -30,11 +30,21 @@ public class RestaurantController {
 
     @GetMapping("/{id}/menu-items")
     public ResponseEntity<List<MenuItemResponse>> getMenuItems(@PathVariable UUID id) {
-        List<MenuItem> items = restaurantService.getMenuItems(id);
+        // Utilise getMenu(String) qui passe par le cache Redis (@Cacheable)
+        List<MenuItem> items = restaurantService.getMenu(id.toString());
         List<MenuItemResponse> response = items.stream()
                 .map(this::toMenuItemResponse)
                 .toList();
         return ResponseEntity.ok(response);
+    }
+
+    @PutMapping("/{id}/menu-items/{itemId}")
+    public ResponseEntity<MenuItemResponse> updateMenuItem(
+            @PathVariable UUID id,
+            @PathVariable UUID itemId,
+            @RequestBody MenuItem updated) {
+        MenuItem item = restaurantService.updateMenuItem(id.toString(), itemId, updated);
+        return ResponseEntity.ok(toMenuItemResponse(item));
     }
 
     @GetMapping
