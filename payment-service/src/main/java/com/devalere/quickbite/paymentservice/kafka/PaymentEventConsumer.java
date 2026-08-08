@@ -2,6 +2,7 @@ package com.devalere.quickbite.paymentservice.kafka;
 
 import com.devalere.quickbite.events.OrderCreatedEvent;
 import com.devalere.quickbite.kafka.KafkaTopics;
+import com.devalere.quickbite.paymentservice.service.PaymentService;
 import com.devalere.quickbite.shared.security.KafkaSecurityHeaders;
 import tools.jackson.databind.ObjectMapper;
 
@@ -13,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Consumer du Payment Service.
- * Ecoute order-events pour declencher le paiement.
+ * Ecoute order-events pour déclencher le paiement.
  */
 @Component
 public class PaymentEventConsumer {
@@ -22,11 +23,13 @@ public class PaymentEventConsumer {
 
     private final ObjectMapper objectMapper;
     private final PaymentEventProducer producer;
+    private final PaymentService paymentService;
 
     public PaymentEventConsumer(ObjectMapper objectMapper,
-            PaymentEventProducer producer) {
+            PaymentEventProducer producer, PaymentService paymentService) {
         this.objectMapper = objectMapper;
         this.producer = producer;
+        this.paymentService = paymentService;
     }
 
     @KafkaListener(topics = KafkaTopics.ORDER_EVENTS, groupId = "payment-group")
@@ -39,12 +42,11 @@ public class PaymentEventConsumer {
         try {
             if ("OrderCreatedEvent".equals(eventType)) {
                 var event = objectMapper.readValue(record.value(), OrderCreatedEvent.class);
-                log.info("Declenchement paiement pour commande {} : {} EUR",
+                log.info("Déclenchement paiement pour commande {} : {} EUR",
                         event.orderId(), event.totalAmount());
 
-                // TODO: appeler Stripe pour creer un PaymentIntent
-                // Pour l'instant, on simule un paiement reussi
-                // producer.publishPaymentCompleted(event.orderId(), event.totalAmount());
+                // Créer le PaymentIntent Stripe (pré-autorisation)
+                paymentService.createPaymentIntent(event);
             }
         } catch (Exception e) {
             log.error("Erreur traitement order event: {}", e.getMessage());
