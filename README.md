@@ -11,7 +11,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 5 : REST externe + gRPC interne (tag `v5.0`)
 - [x] Video 6 : Communication asynchrone - Events et Kafka (tag `v6.0`)
 - [x] Video 7 : Le flux de commande - Saga orchestree (tag `v7.0`)
-- [ ] Video 8 : Paiement - Idempotence et webhooks Stripe
+- [x] Video 8 : Paiement - Idempotence et webhooks Stripe (tag `v8.0`)
 - [ ] Video 9 : Cache distribue - Redis
 
 ## Architecture
@@ -188,7 +188,30 @@ SVC_TOKEN=$(curl -s -X POST \
 echo $SVC_TOKEN | cut -d'.' -f2 | base64 -d 2>/dev/null | jq .
 ```
 
-### 7. Vérifier les endpoints Keycloak
+### 7. Lister les clients Keycloak
+
+```bash
+# Obtenir un token admin et lister les clients du realm
+curl -s http://localhost:8180/admin/realms/quickbite/clients \
+  -H "Authorization: Bearer $(curl -s -X POST http://localhost:8180/realms/master/protocol/openid-connect/token \
+  -d 'grant_type=password&client_id=admin-cli&username=admin&password=admin' | jq -r '.access_token')" \
+  | jq '.[].clientId'
+```
+
+Clients configures :
+| Client ID         | Usage                                |
+|-------------------|--------------------------------------|
+| quickbite-mobile  | App mobile (Direct Access Grant)     |
+| order-svc         | Service-to-service (Client Credentials) |
+| payment-svc       | Service-to-service (Client Credentials) |
+| restaurant-svc    | Service-to-service (Client Credentials) |
+| delivery-svc      | Service-to-service (Client Credentials) |
+| notification-svc  | Service-to-service (Client Credentials) |
+| user-svc          | Service-to-service (Client Credentials) |
+
+> **Important** : le client pour les tokens utilisateur est `quickbite-mobile`, pas `quickbite-app`.
+
+### 8. Vérifier les endpoints Keycloak
 
 ```bash
 # Configuration auto-découverte (utilisée par Spring)
@@ -784,6 +807,124 @@ curl -s http://localhost:8083/api/orders/$ORDER_ID \
               -> met a jour le statut
               -> compense si echec
 ```
+
+---
+
+## Video 8 : Paiement - Idempotence et Webhooks Stripe
+
+### 1. Configurer Stripe (pre-requis)
+
+```bash
+# Verifier que la cle Stripe est configuree dans payment-service/application.yaml
+# stripe.secret-key et stripe.webhook-secret
+
+# Installer Stripe CLI pour les webhooks locaux
+# https://docs.stripe.com/stripe-cli
+brew install stripe/stripe-cli/stripe
+
+# Se connecter a Stripe
+stripe login
+
+# Ecouter les webhooks en local (dans un terminal dedie)
+stripe listen --forward-to localhost:8086/api/webhooks/stripe
+# -> Copier le whsec_... affiche et le mettre dans application.yaml (stripe.webhook-secret)
+```
+
+### 2. Lancer les services
+
+```bash
+# Infrastructure
+docker compose up -d
+
+# Lancer les services (dans des terminaux separes)
+cd order-service       && mvn spring-boot:run
+cd restaurant-service  && mvn spring-boot:run
+cd payment-service     && mvn spring-boot:run
+cd notification-service && mvn spring-boot:run
+```
+
+### 3. Creer une commande (declenche le flux Saga + Paiement)
+
+```bash
+# Recuperer un token
+TOKEN=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -d "grant_type=password&client_id=quickbite-mobile&username=client1&password=password" \
+  | jq -r '.access_token')
+
+# Creer une commande chez Tokyo Ramen House
+# Tonkotsu Ramen x2 (14.50) + Gyoza x1 (7.50) = 36.50
+ORDER_ID=$(curl -s -X POST http://localhost:8083/api/orders \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "restaurantId": "a1b2c3d4-0001-4000-8000-000000000002",
+    "deliveryAddress": "42 rue de la Paix, Paris",
+    "items": [
+      {"menuItemId": "b1b2c3d4-0002-4000-8000-000000000001", "quantity": 2},
+      {"menuItemId": "b1b2c3d4-0002-4000-8000-000000000003", "quantity": 1}
+    ]
+  }' | jq -r '.id')
+
+echo "Order ID: $ORDER_ID"
+```
+
+### 4. Verifier le paiement en base
+
+```bash
+docker exec quickbite-postgres-payment psql -U quickbite -d quickbite-payment \
+  -c "SELECT id, order_id, amount, status, stripe_payment_intent_id, idempotency_key FROM payments;"
+```
+
+### 5. Verifier le statut de la commande
+
+```bash
+curl -s http://localhost:8083/api/orders/$ORDER_ID \
+  -H "Authorization: Bearer $TOKEN" | jq '.status'
+# -> "PAYMENT_PENDING" (en attente du webhook Stripe)
+```
+
+### 6. Simuler un webhook Stripe (via Stripe CLI)
+
+```bash
+# Le webhook arrive automatiquement si Stripe CLI ecoute
+# Sinon, declencher manuellement :
+stripe trigger payment_intent.succeeded
+```
+
+### 7. Verifier les logs du flux complet
+
+```bash
+# order-service :
+#   "OrderCreatedEvent publie pour orderId=..."
+#   "Commande ... en attente de paiement -> PAYMENT_PENDING"
+
+# payment-service :
+#   "Payment recu event: OrderCreatedEvent pour orderId=..."
+#   "PaymentIntent cree: pi_... pour order ..."
+#   "Webhook recu: payment_intent.succeeded"
+
+# notification-service :
+#   "Email: 'Votre commande ... a ete creee'"
+```
+
+### Points cles - Architecture Paiement
+
+```
+Client -> OrderService -> Kafka (order-events) -> PaymentService -> Stripe API
+                                                       |
+                                                  Idempotency-Key
+                                                  (order_pay_{orderId})
+                                                       |
+Stripe -> Webhook POST /api/webhooks/stripe -> PaymentService
+              |                                    |
+         Signature HMAC                    Deduplication stripeEventId
+         (Stripe-Signature header)         (existsByStripeEventId)
+```
+
+- **Pre-autorisation + Capture** : on bloque le montant, on ne debite qu'apres confirmation restaurant (ADR #7)
+- **Idempotency-Key** : chaque appel Stripe porte `order_pay_{orderId}`, pas de double PaymentIntent
+- **Deduplication webhook** : le `stripeEventId` est stocke en base, les doublons sont ignores
+- **Compensation** : si la Saga echoue apres paiement, on appelle `PaymentIntent.cancel()` (pas de refund)
 
 ---
 
