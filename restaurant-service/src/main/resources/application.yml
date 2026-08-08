@@ -1,7 +1,17 @@
 spring:
   application:
     name: restaurant-service
-
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  cache:
+    type: redis
+    redis:
+      time-to-live: 500000 # 5 minutes in milliseconds
+      key-prefix: "quickbite:"
+      use-key-prefix: true
+      cache-null-values: false
   datasource:
     url: jdbc:postgresql://localhost:5433/quickbite-restaurant
     username: quickbite
