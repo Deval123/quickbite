@@ -13,6 +13,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 7 : Le flux de commande - Saga orchestree (tag `v7.0`)
 - [x] Video 8 : Paiement - Idempotence et webhooks Stripe (tag `v8.0`)
 - [x] Video 9 : Cache distribue - Redis (tag `v9.0`)
+- [x] Video 10 : Recherche Elasticsearch (tag `v10.0`)
 
 ## Architecture
 
@@ -1058,6 +1059,163 @@ PUT /menu-items/{id} -> @CacheEvict -> supprime quickbite:menus::{restaurantId}
 - **sync=true** : un seul thread reconstruit le cache (stampede protection)
 - **Invalidation event-driven** : Kafka propage l'invalidation a toutes les instances
 - **Serialisation JSON** : GenericJacksonJsonRedisSerializer avec default typing (@class)
+
+---
+
+## Video 10 : Recherche - Elasticsearch
+
+### Pre-requis
+
+- Elasticsearch 8.13.4 demarre via `docker-compose up -d elasticsearch`
+- restaurant-service demarre avec l'annotation `@EventListener(ApplicationReadyEvent.class)` sur `RestaurantSearchInitializer`
+- Les 5 restaurants seed inseres via Flyway (V3)
+
+### 1. Diagnostics - Verifier l'etat d'Elasticsearch
+
+```bash
+# Sante du cluster
+curl -s "http://localhost:9200/_cluster/health" | jq .
+
+# L'index existe-t-il ?
+curl -s "http://localhost:9200/quickbite-restaurants" | jq .
+
+# Nombre de documents indexes
+curl -s "http://localhost:9200/quickbite-restaurants/_count" | jq .
+# Attendu : {"count":5, ...}
+
+# Voir un echantillon de documents
+curl -s "http://localhost:9200/quickbite-restaurants/_search?pretty&size=1" | jq .
+```
+
+### 2. Verifier le bootstrap au demarrage
+
+```bash
+# Logs du restaurant-service au demarrage
+# Chercher ces deux lignes :
+#   "=== Bootstrap Elasticsearch : indexation de tous les restaurants ==="
+#   "=== Bootstrap termine : 5 restaurants indexes ==="
+
+docker logs quickbite-restaurant-service 2>&1 | grep -i "bootstrap"
+```
+
+### 3. Nettoyer un document de test
+
+```bash
+# Supprimer un document de test (si indexe manuellement)
+curl -s -X DELETE "http://localhost:9200/quickbite-restaurants/_doc/test1" | jq .
+```
+
+### 4. Recherche full-text
+
+```bash
+TOKEN=$(curl -s -X POST "http://localhost:8180/realms/quickbite/protocol/openid-connect/token" \
+  -d "client_id=quickbite-mobile" \
+  -d "grant_type=password" \
+  -d "username=client1" \
+  -d "password=password" | jq -r '.access_token')
+
+# Recherche "ramen"
+curl -s "http://localhost:8085/api/search/restaurants?q=ramen" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# Recherche "pizza"
+curl -s "http://localhost:8085/api/search/restaurants?q=pizza" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### 5. Recherche fuzzy (tolerance aux fautes)
+
+```bash
+# "piza" avec un seul z -> doit trouver "Pizza Napoli"
+curl -s "http://localhost:8085/api/search/restaurants?q=piza" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# "ramn" -> doit trouver "Tokyo Ramen House"
+curl -s "http://localhost:8085/api/search/restaurants?q=ramn" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### 6. Recherche geo (par distance)
+
+```bash
+# Restaurants dans un rayon de 5 km autour de (48.8566, 2.3522) - centre de Paris
+curl -s "http://localhost:8085/api/search/restaurants?q=restaurant&lat=48.8566&lon=2.3522&radius=5" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### 7. Recherche avec filtres
+
+```bash
+# Filtrer par type de cuisine
+curl -s "http://localhost:8085/api/search/restaurants?q=ramen&cuisine=Japonais" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# Filtrer par note minimale
+curl -s "http://localhost:8085/api/search/restaurants?q=ramen&minRating=4.0" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
+
+### 8. Synchronisation event-driven (Kafka -> Elasticsearch)
+
+```bash
+# 1. Modifier un menu item via l'API (declenche un event Kafka)
+curl -s -X PUT "http://localhost:8080/api/restaurants/a1b2c3d4-0001-4000-8000-000000000002/menu-items/b1b2c3d4-0002-4000-8000-000000000001" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Tonkotsu Ramen UPDATED","price":17.0,"category":"Ramen"}' | jq .
+
+# 2. Attendre 2 secondes (propagation Kafka)
+sleep 2
+
+# 3. Verifier que le menu item est mis a jour dans Elasticsearch (recherche nested)
+curl -s "http://localhost:8085/api/search/restaurants?q=UPDATED" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# Attendu : Tokyo Ramen House avec "Tonkotsu Ramen UPDATED" dans menuItems
+
+# 4. Verifier que la recherche par nom de restaurant fonctionne toujours
+curl -s "http://localhost:8085/api/search/restaurants?q=ramen" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# Attendu : Tokyo Ramen House (match sur name + description)
+```
+
+### 9. Re-indexation complete (si necessaire)
+
+```bash
+# Supprimer l'index et redemarrer le service pour re-indexer
+curl -s -X DELETE "http://localhost:9200/quickbite-restaurants" | jq .
+
+# Redemarrer le restaurant-service -> RestaurantSearchInitializer re-indexe tout
+docker restart quickbite-restaurant-service
+
+# Verifier apres ~10 secondes
+sleep 10
+curl -s "http://localhost:9200/quickbite-restaurants/_count" | jq .
+```
+
+### Points cles - Architecture Elasticsearch
+
+```
+WRITE PATH (event-driven) :
+  RestaurantService -> PostgreSQL (source de verite)
+        |
+        v
+  KafkaProducer -> topic "restaurant-event"
+        |
+        v
+  SearchIndexer (@KafkaListener) -> Elasticsearch (index quickbite-restaurants)
+
+READ PATH (recherche) :
+  Client -> Gateway (8080) -> SearchController -> SearchService -> Elasticsearch
+                                                      |
+                                              full-text + geo + fuzzy + filtres
+```
+
+- **PostgreSQL = source de verite** : on ne fait jamais de Dual Write
+- **Event-driven sync** : Kafka garantit la coherence eventuelle (replay si ES down)
+- **Inverted index** : recherche full-text en O(1) vs LIKE en O(n)
+- **geo_point** : filtre par distance sans calcul cote application
+- **Fuzzy matching** : fuzziness=AUTO tolere 1-2 fautes de frappe
+- **Bootstrap** : `RestaurantSearchInitializer` indexe tous les restaurants existants au demarrage
 
 ---
 
