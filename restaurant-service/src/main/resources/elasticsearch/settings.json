@@ -1,0 +1,25 @@
+{
+  "index": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "analysis": {
+    "analyzer": {
+      "french": {
+        "type": "custom",
+        "tokenizer": "standard",
+        "filter": ["lowercase", "french_stop", "french_stemmer"]
+      }
+    },
+    "filter": {
+      "french_stop": {
+        "type": "stop",
+        "stopwords": "_french_"
+      },
+      "french_stemmer": {
+        "type": "stemmer",
+        "language": "french"
+      }
+    }
+  }
+}

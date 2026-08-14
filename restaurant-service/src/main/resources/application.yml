@@ -24,6 +24,8 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+  elasticsearch:
+    uris: http://localhost:9200
 
   kafka:
     bootstrap-servers: localhost:9092
@@ -70,3 +72,7 @@ management:
 grpc:
   server:
     port: 9001
+
+logging:
+  level:
+    org.springframework.data.elasticsearch.client.WIRE: TRACE
