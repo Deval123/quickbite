@@ -2,6 +2,7 @@ package com.devalere.quickbite.deliveryservice.kafka;
 
 import com.devalere.quickbite.events.DeliveryAssignedEvent;
 import com.devalere.quickbite.events.DeliveryCompletedEvent;
+import com.devalere.quickbite.events.DeliveryLocationEvent;
 import com.devalere.quickbite.kafka.KafkaTopics;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
@@ -43,6 +44,21 @@ public class DeliveryEventProducer {
                 Instant.now()
         );
         publish(KafkaTopics.DELIVERY_EVENTS, orderId, event, "DeliveryAssignedEvent");
+    }
+
+    /**
+     * Publie la position GPS du livreur sur le topic delivery-location-events.
+     * Consomme par le Notification Service pour push WebSocket au client.
+     */
+    public void publishDeliveryLocation(String orderId, double latitude, double longitude) {
+        var event = new DeliveryLocationEvent(
+                orderId,
+                "driver-current", // TODO: extraire du JWT
+                latitude,
+                longitude,
+                Instant.now()
+        );
+        publish(KafkaTopics.DELIVERY_LOCATION_EVENTS, orderId, event, "DeliveryLocationEvent");
     }
 
     public void publishDeliveryCompleted(String orderId, String driverId) {
