@@ -62,6 +62,14 @@ spring:
                     redis-rate-limiter.burstCapacity: 20
                     key-resolver: "#{@ipKeyResolver}"
 
+            # --- SSE : statut commande (Notification Service) ---
+            # IMPORTANT : cette route DOIT etre AVANT order-service
+            # sinon /api/orders/** matche en premier et envoie au mauvais service
+            - id: sse-order-status
+              uri: http://localhost:8087
+              predicates:
+                - Path=/api/orders/*/stream
+
             # --- Order Service ---
             - id: order-service
               uri: http://localhost:8083
@@ -109,6 +117,12 @@ spring:
                     redis-rate-limiter.replenishRate: 10
                     redis-rate-limiter.burstCapacity: 20
                     key-resolver: "#{@ipKeyResolver}"
+
+            # --- WebSocket (Notification Service) ---
+            - id: websocket-tracking
+              uri: ws://localhost:8087
+              predicates:
+                - Path=/ws/tracking/**
 
           # ---------- Route par defaut ----------
           default-filters:

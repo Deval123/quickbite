@@ -14,6 +14,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 8 : Paiement - Idempotence et webhooks Stripe (tag `v8.0`)
 - [x] Video 9 : Cache distribue - Redis (tag `v9.0`)
 - [x] Video 10 : Recherche Elasticsearch (tag `v10.0`)
+- [x] Video 11 : Suivi temps reel - WebSocket + SSE (tag `v11.0`)
 
 ## Architecture
 
@@ -1216,6 +1217,212 @@ READ PATH (recherche) :
 - **geo_point** : filtre par distance sans calcul cote application
 - **Fuzzy matching** : fuzziness=AUTO tolere 1-2 fautes de frappe
 - **Bootstrap** : `RestaurantSearchInitializer` indexe tous les restaurants existants au demarrage
+
+---
+
+## Video 11 : Suivi temps reel - WebSocket + SSE
+
+### Prerequis
+
+Tous les tokens Keycloak sont necessaires pour les tests. Les services sont proteges par JWT (OAuth2 Resource Server).
+
+```bash
+# ---- Obtenir les tokens ----
+
+# Token CLIENT (pour SSE - suivi statut commande)
+TOKEN=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=quickbite-mobile&username=client1&password=password" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Token DRIVER (pour envoyer la position GPS)
+DRIVER_TOKEN=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=quickbite-mobile&username=driver1&password=password" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+echo "CLIENT TOKEN OK: ${TOKEN:0:20}..."
+echo "DRIVER TOKEN OK: ${DRIVER_TOKEN:0:20}..."
+```
+
+> **Note** : les tokens expirent apres 5 minutes. Regenerer si necessaire.
+
+### 11.1 Verifier que les services sont up
+
+```bash
+# Notification Service (port 8087)
+curl -s http://localhost:8087/actuator/health | jq .
+
+# Delivery Service (port 8088)
+curl -s http://localhost:8088/actuator/health | jq .
+
+# Redis (necessaire pour Pub/Sub)
+docker exec quickbite-redis redis-cli ping
+
+# Keycloak (port 8180)
+curl -s http://localhost:8180/realms/quickbite/.well-known/openid-configuration | jq .issuer
+```
+
+### 11.2 Tester SSE - Statut de commande
+
+```bash
+# Terminal 1 : ouvrir le flux SSE (reste ouvert, affiche les events au fil de l'eau)
+# Directement sur le Notification Service :
+curl -N -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8087/api/orders/ORDER-001/stream
+
+# Ou via le Gateway (port 8080) :
+curl -N -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/orders/ORDER-001/stream
+```
+
+Le flux reste ouvert. Les events arrivent quand le statut change via Kafka.
+
+> **IMPORTANT** : la route SSE `/api/orders/*/stream` doit etre declaree
+> AVANT la route `/api/orders/**` dans la config du Gateway,
+> sinon le Gateway envoie la requete au Order Service (404).
+
+### 11.3 Simuler l'envoi de position GPS par le livreur
+
+Dans un autre terminal, envoyer des positions avec le token DRIVER :
+
+```bash
+# Position 1 : le livreur part du restaurant
+curl -s -X POST http://localhost:8088/api/deliveries/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DRIVER_TOKEN" \
+  -d '{"orderId":"ORDER-001","latitude":48.8566,"longitude":2.3522}' | jq .
+
+# Position 2 : le livreur avance (attendre 3 secondes)
+curl -s -X POST http://localhost:8088/api/deliveries/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DRIVER_TOKEN" \
+  -d '{"orderId":"ORDER-001","latitude":48.8580,"longitude":2.3510}' | jq .
+
+# Position 3 : le livreur arrive
+curl -s -X POST http://localhost:8088/api/deliveries/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DRIVER_TOKEN" \
+  -d '{"orderId":"ORDER-001","latitude":48.8595,"longitude":2.3498}' | jq .
+```
+
+Reponse attendue pour chaque appel :
+```json
+{"status": "received"}
+```
+
+### 11.4 Tester WebSocket - Position GPS du livreur
+
+Un script Node.js `test-websocket.mjs` est fourni a la racine du projet.
+Il se connecte en STOMP via SockJS et ecoute les positions GPS.
+
+```bash
+# 1. Installer les dependances (une seule fois)
+npm install sockjs-client @stomp/stompjs
+
+# 2. Lancer le client WebSocket (Terminal 1 - reste ouvert et ecoute)
+node test-websocket.mjs
+```
+
+Sortie attendue :
+```
+STOMP connecte !
+Abonne a /topic/delivery/ORDER-001
+En attente de positions GPS...
+```
+
+Puis dans un **deuxieme terminal**, envoyer des positions GPS (11.3).
+Les positions doivent apparaitre dans le premier terminal :
+
+```
+Position recue : lat=48.8566, lon=2.3522, orderId=ORDER-001
+Position recue : lat=48.858, lon=2.351, orderId=ORDER-001
+Position recue : lat=48.8595, lon=2.3498, orderId=ORDER-001
+```
+
+> **Note** : `test-websocket.mjs` se connecte directement au Notification Service
+> (port 8087). Le protocole STOMP raw via wscat est difficile a manipuler
+> manuellement (frames avec null byte), ce script est l'approche recommandee.
+
+### 11.5 Verifier le broadcast Redis Pub/Sub
+
+```bash
+# Terminal separe : s'abonner au channel Redis
+docker exec -it quickbite-redis redis-cli SUBSCRIBE delivery-location-broadcast
+
+# Puis envoyer une position (11.3) et verifier que le message apparait dans Redis
+```
+
+### 11.6 Verifier les logs Kafka
+
+```bash
+# Verifier que le topic delivery-location-events existe
+docker exec quickbite-kafka kafka-topics.sh --list --bootstrap-server localhost:9092 | grep delivery
+
+# Consommer les events de position pour debug
+docker exec quickbite-kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic delivery-location-events \
+  --from-beginning
+```
+
+### 11.7 Tester via le Gateway (flux complet)
+
+```bash
+# SSE via Gateway (token CLIENT)
+curl -N -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/orders/ORDER-001/stream
+
+# Position GPS via Gateway (token DRIVER)
+curl -s -X POST http://localhost:8080/api/deliveries/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $DRIVER_TOKEN" \
+  -d '{"orderId":"ORDER-001","latitude":48.8566,"longitude":2.3522}' | jq .
+```
+
+### 11.8 Troubleshooting
+
+| Symptome | Cause probable | Solution |
+|----------|---------------|----------|
+| 401 sur Delivery Service | `scanBasePackages` manquant | Verifier `@SpringBootApplication(scanBasePackages = "com.devalere.quickbite")` |
+| 404 sur SSE via Gateway | Route SSE apres `/api/orders/**` | Placer la route `sse-order-status` AVANT `order-service` dans `application.yaml` |
+| SSE retourne vide immediatement | Token expire | Regenerer le token (expire apres 5 min) |
+| WebSocket ne recoit rien | Redis pas demarre | `docker exec quickbite-redis redis-cli ping` |
+
+### 11.9 Fichiers crees/modifies
+
+```
+shared-kernel/
+  src/main/java/com/devalere/quickbite/
+    events/DeliveryLocationEvent.java          # NOUVEAU - event position GPS
+    kafka/KafkaTopics.java                     # MODIFIE - ajout DELIVERY_LOCATION_EVENTS
+
+delivery-service/
+  src/main/java/com/devalere/quickbite/deliveryservice/
+    DeliveryServiceApplication.java             # MODIFIE - ajout scanBasePackages
+    controller/DeliveryLocationController.java  # NOUVEAU - POST /api/deliveries/location
+    dto/LocationUpdateRequest.java              # NOUVEAU - DTO position
+    kafka/DeliveryEventProducer.java            # MODIFIE - ajout publishDeliveryLocation()
+
+notification-service/
+  pom.xml                                      # MODIFIE - ajout websocket + redis
+  src/main/resources/application.yaml          # MODIFIE - ajout config Redis
+  src/main/java/com/devalere/quickbite/notificationservice/
+    config/WebSocketConfig.java                 # NOUVEAU - STOMP + SockJS
+    config/RedisConfig.java                     # NOUVEAU - Pub/Sub broadcast
+    websocket/LocationBroadcastListener.java    # NOUVEAU - Redis -> WebSocket push
+    kafka/DeliveryLocationConsumer.java          # NOUVEAU - Kafka -> Redis Pub/Sub
+    kafka/NotificationEventConsumer.java         # MODIFIE - ajout push SSE
+    sse/OrderStatusSseController.java            # NOUVEAU - GET /api/orders/{id}/stream
+    sse/SseEmitterRegistry.java                  # NOUVEAU - registry thread-safe
+
+gateway-service/
+  src/main/resources/application.yaml          # MODIFIE - routes WebSocket + SSE
+                                               #   route sse-order-status AVANT order-service
+
+test-websocket.mjs                             # NOUVEAU - script Node.js client STOMP/SockJS
+                                               #   pour tester la reception des positions GPS
+```
 
 ---
 

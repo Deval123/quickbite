@@ -10,6 +10,7 @@ public final class KafkaTopics {
     public static final String RESTAURANT_EVENTS = "restaurant-events";
     public static final String DELIVERY_EVENTS = "delivery-events";
     public static final String NOTIFICATION_EVENTS = "notification-events";
+    public static final String DELIVERY_LOCATION_EVENTS = "delivery-location-events";
 
     public static final int PARTITIONS = 3;
     public static final short REPLICATION_FACTOR = 1;

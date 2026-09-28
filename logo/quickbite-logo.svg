@@ -1,0 +1,38 @@
+<svg viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+
+  <!-- Background transparent -->
+
+  <!-- Icon: assiette stylisee avec eclair (speed + food) -->
+  <g transform="translate(10, 10)">
+    <!-- Cercle principal (assiette) -->
+    <circle cx="50" cy="50" r="46" fill="#ff6b35" />
+    <circle cx="50" cy="50" r="38" fill="#ffffff" />
+
+    <!-- Eclair (vitesse) integre dans une fourchette stylisee -->
+    <!-- Dent gauche fourchette -->
+    <rect x="33" y="22" width="5" height="20" rx="2" fill="#ff6b35"/>
+    <!-- Dent centre fourchette -->
+    <rect x="42" y="22" width="5" height="20" rx="2" fill="#ff6b35"/>
+    <!-- Dent droite fourchette -->
+    <rect x="51" y="22" width="5" height="20" rx="2" fill="#ff6b35"/>
+
+    <!-- Manche fourchette avec eclair -->
+    <path d="M33 42 L56 42 L48 54 L58 54 L38 78 L44 62 L34 62 Z" fill="#ff6b35"/>
+  </g>
+
+  <!-- Texte "QuickBite" -->
+  <text x="120" y="55" fill="#1e293b" font-size="42" font-weight="bold" letter-spacing="-1">
+    Quick<tspan fill="#ff6b35">Bite</tspan>
+  </text>
+
+  <!-- Sous-titre -->
+  <text x="122" y="80" fill="#94a3b8" font-size="14" letter-spacing="3">
+    FOOD DELIVERY
+  </text>
+
+  <!-- Petits points decoratifs (vapeur/vitesse) -->
+  <circle cx="108" cy="30" r="3" fill="#ff6b35" opacity="0.3"/>
+  <circle cx="116" cy="22" r="2.5" fill="#ff6b35" opacity="0.2"/>
+  <circle cx="106" cy="18" r="2" fill="#ff6b35" opacity="0.15"/>
+
+</svg>

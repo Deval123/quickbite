@@ -16,6 +16,11 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
 
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
   kafka:
     bootstrap-servers: localhost:9092
     producer:
