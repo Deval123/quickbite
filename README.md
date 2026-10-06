@@ -15,6 +15,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 9 : Cache distribue - Redis (tag `v9.0`)
 - [x] Video 10 : Recherche Elasticsearch (tag `v10.0`)
 - [x] Video 11 : Suivi temps reel - WebSocket + SSE (tag `v11.0`)
+- [x] Video 12 : Geolocalisation - Matching livreur-commande (tag `v12.0`)
 
 ## Architecture
 
@@ -1426,6 +1427,147 @@ test-websocket.mjs                             # NOUVEAU - script Node.js client
 
 ---
 
+## Video 12 : Geolocalisation - Matching livreur-commande
+
+### Pre-requis
+
+```bash
+# Demarrer l'infra (Redis, Kafka, PostgreSQL, Keycloak)
+docker compose up -d
+
+# Demarrer le Delivery Service (port 8088)
+cd delivery-service && mvn spring-boot:run
+
+# Generer un token JWT
+TOKEN=$(curl -s -X POST http://localhost:8180/realms/quickbite/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=quickbite-mobile&username=driver1&password=password" | jq -r '.access_token')
+```
+
+### 12.1 Verifier qu'aucun livreur n'est enregistre (avant simulation)
+
+```bash
+# Doit retourner [] (liste vide)
+curl -s "http://localhost:8088/api/deliveries/drivers/nearby?lat=48.8566&lon=2.3522&radius=5" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### 12.2 Simuler les positions de 3 livreurs (Redis GEO)
+
+```bash
+# Livreur 1 : proche du restaurant (500m)
+curl -s -X POST http://localhost:8088/api/deliveries/drivers/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"driverId":"driver1","latitude":48.8570,"longitude":2.3525}' | jq
+
+# Livreur 2 : a 2 km
+curl -s -X POST http://localhost:8088/api/deliveries/drivers/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"driverId":"driver2","latitude":48.8700,"longitude":2.3400}' | jq
+
+# Livreur 3 : a 4 km
+curl -s -X POST http://localhost:8088/api/deliveries/drivers/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"driverId":"driver3","latitude":48.8900,"longitude":2.3200}' | jq
+```
+
+### 12.3 Verifier que les 3 livreurs sont enregistres (apres simulation)
+
+```bash
+# Doit retourner les 3 livreurs avec leurs distances
+curl -s "http://localhost:8088/api/deliveries/drivers/nearby?lat=48.8566&lon=2.3522&radius=5" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### 12.4 Verifier les livreurs proches (GEORADIUS avec filtrage par rayon)
+
+```bash
+# Livreurs dans un rayon de 2 km autour du restaurant (Paris centre)
+curl -s "http://localhost:8088/api/deliveries/drivers/nearby?lat=48.8566&lon=2.3522&radius=2" \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# Elargir a 5 km
+curl -s "http://localhost:8088/api/deliveries/drivers/nearby?lat=48.8566&lon=2.3522&radius=5" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### 12.5 Lancer le matching (scoring + geofencing + ETA)
+
+```bash
+curl -s -X POST http://localhost:8088/api/deliveries/match \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "orderId": "ORDER-100",
+    "restaurantId": "REST-001",
+    "restaurantLat": 48.8566,
+    "restaurantLon": 2.3522,
+    "clientLat": 48.8606,
+    "clientLon": 2.3376
+  }' | jq
+```
+
+Reponse attendue :
+```json
+{
+  "orderId": "ORDER-100",
+  "driverId": "driver1",
+  "score": 0.875,
+  "distanceKm": 0.05,
+  "etaMinutes": 15,
+  "radiusUsedKm": 2.0,
+  "matched": true
+}
+```
+
+### 12.6 Verifier dans Redis (optionnel)
+
+```bash
+# Voir les livreurs stockes dans Redis GEO
+docker exec quickbite-redis redis-cli GEOPOS drivers:active driver1 driver2 driver3
+
+# Distance entre driver1 et driver2
+docker exec quickbite-redis redis-cli GEODIST drivers:active driver1 driver2 km
+
+# GEORADIUS depuis le restaurant
+docker exec quickbite-redis redis-cli GEORADIUS drivers:active 2.3522 48.8566 5 km ASC WITHDIST
+```
+
+### 12.7 Troubleshooting
+
+| Probleme | Cause | Solution |
+|----------|-------|----------|
+| `Connection refused` port 8088 | Delivery Service non demarre | `cd delivery-service && mvn spring-boot:run` |
+| `401 Unauthorized` | Token expire (5 min) | Regenerer le TOKEN |
+| Matching retourne `matched: false` | Aucun livreur en Redis GEO | Simuler les positions (section 12.1) |
+| Redis `WRONGTYPE` | Conflit cle Redis existante | `docker exec quickbite-redis redis-cli DEL drivers:active` |
+
+### 12.8 Fichiers Video 12
+
+```
+delivery-service/
+  pom.xml                                        # MODIFIE - ajout spring-boot-starter-data-redis
+  src/main/resources/application.yaml             # MODIFIE - ajout config Redis
+  src/main/java/.../service/
+    DriverLocationService.java                    # NOUVEAU - Redis GEO GEOADD/GEORADIUS
+    MatchingService.java                          # NOUVEAU - scoring multi-criteres
+    GeofencingService.java                        # NOUVEAU - expansion rayon 2km/5km/10km
+    EtaCalculator.java                            # NOUVEAU - calcul ETA avec marge 20%
+  src/main/java/.../controller/
+    MatchingController.java                       # NOUVEAU - endpoints test matching
+    DeliveryLocationController.java               # MODIFIE - stockage Redis GEO
+  src/main/java/.../dto/
+    MatchResult.java                              # NOUVEAU - resultat matching
+    MatchingRequest.java                          # NOUVEAU - requete matching
+  src/main/java/.../kafka/
+    DeliveryEventConsumer.java                    # MODIFIE - integration MatchingService
+```
+
+---
+
 ## Stack technique
 
 | Technologie               | Usage                              |
@@ -1436,7 +1578,7 @@ test-websocket.mjs                             # NOUVEAU - script Node.js client
 | PostgreSQL                | Base de données (une par service)  |
 | Flyway                    | Migrations de schéma               |
 | gRPC + Protobuf           | Communication interne (service-to-service) |
-| Redis                     | Rate limiting du Gateway           |
+| Redis                     | Rate limiting, cache, GEO (positions livreurs) |
 | Apache Kafka              | Messaging asynchrone               |
 | Keycloak                  | Identity Provider OAuth2 / OIDC    |
 | Docker Compose            | Infrastructure locale              |
