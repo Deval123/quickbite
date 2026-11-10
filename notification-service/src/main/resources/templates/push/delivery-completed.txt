@@ -1,0 +1,1 @@
+Commande livree ! Bon appetit. Laisse un avis pour [(${restaurantName != null ? restaurantName : 'le restaurant'})].

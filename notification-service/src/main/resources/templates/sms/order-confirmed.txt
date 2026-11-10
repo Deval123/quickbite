@@ -1,0 +1,1 @@
+QuickBite : votre commande [(${orderId})] est confirmee. Livraison estimee : [(${eta != null ? eta : 'bientot'})].

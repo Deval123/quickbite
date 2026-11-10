@@ -1,7 +1,9 @@
 package com.devalere.quickbite.notificationservice.kafka;
 
 import com.devalere.quickbite.kafka.KafkaTopics;
+import com.devalere.quickbite.notificationservice.service.NotificationRouter;
 import com.devalere.quickbite.notificationservice.sse.SseEmitterRegistry;
+import tools.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,23 +11,30 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Consumer du Notification Service.
  * Ecoute TOUS les topics pour :
- * 1. Envoyer des notifications (email, push, SMS) - existant
- * 2. Pousser les changements de statut via SSE au client - NOUVEAU
+ * 1. Router vers le systeme de notification multi-canal (NOUVEAU Video 13)
+ * 2. Pousser les changements de statut via SSE au client (Video 11)
  */
 @Component
 public class NotificationEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationEventConsumer.class);
 
+    private final NotificationRouter notificationRouter;
     private final SseEmitterRegistry sseRegistry;
+    private final ObjectMapper objectMapper;
 
-    public NotificationEventConsumer(SseEmitterRegistry sseRegistry) {
+    public NotificationEventConsumer(NotificationRouter notificationRouter,
+                                     SseEmitterRegistry sseRegistry,
+                                     ObjectMapper objectMapper) {
+        this.notificationRouter = notificationRouter;
         this.sseRegistry = sseRegistry;
+        this.objectMapper = objectMapper;
     }
 
     @KafkaListener(
@@ -44,27 +53,21 @@ public class NotificationEventConsumer {
         log.info("[NOTIFICATION] Event recu: topic={}, type={}, orderId={}",
                 record.topic(), eventType, orderId);
 
-        // 1. Notifications classiques (email, push, SMS)
-        switch (eventType) {
-        case "OrderCreatedEvent" ->
-                log.info("Email: 'Votre commande {} a ete creee'", orderId);
-        case "PaymentCompletedEvent" ->
-                log.info("Email: 'Paiement confirme pour commande {}'", orderId);
-        case "PaymentFailedEvent" ->
-                log.info("Email: 'Echec paiement pour commande {}'", orderId);
-        case "OrderConfirmedEvent" ->
-                log.info("Push: 'Le restaurant prepare votre commande {}'", orderId);
-        case "OrderReadyEvent" ->
-                log.info("Push: 'Votre commande {} est prete !'", orderId);
-        case "DeliveryAssignedEvent" ->
-                log.info("Push: 'Un livreur arrive pour commande {}'", orderId);
-        case "DeliveryCompletedEvent" ->
-                log.info("Push: 'Commande {} livree ! Bon appetit !'", orderId);
-        default ->
-                log.warn("Event inconnu: {}", eventType);
+        // 1. Extraire les donnees de l'event
+        Map<String, Object> eventData = parseEventData(record.value());
+        eventData.put("orderId", orderId);
+        eventData.put("eventType", eventType);
+
+        String userId = (String) eventData.getOrDefault("userId", "unknown");
+
+        // 2. Router vers le systeme de notification multi-canal
+        try {
+            notificationRouter.route(eventType, orderId, userId, eventData);
+        } catch (Exception e) {
+            log.error("[NOTIFICATION] Erreur routing notification : {}", e.getMessage(), e);
         }
 
-        // 2. Push SSE : envoyer le changement de statut au client en temps reel
+        // 3. Push SSE : envoyer le changement de statut au client en temps reel
         String status = mapEventToStatus(eventType);
         if (status != null && orderId != null) {
             Map<String, Object> sseData = Map.of(
@@ -73,13 +76,20 @@ public class NotificationEventConsumer {
                     "timestamp", Instant.now().toString()
             );
             sseRegistry.send(orderId, "STATUS_CHANGED", sseData);
-            log.info("[SSE] Statut {} pousse pour orderId={}", status, orderId);
         }
     }
 
-    /**
-     * Mappe un event Kafka vers un statut de commande lisible.
-     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseEventData(String json) {
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            log.warn("[NOTIFICATION] Impossible de parser le JSON de l'event : {}",
+                    e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
     private String mapEventToStatus(String eventType) {
         return switch (eventType) {
             case "OrderCreatedEvent" -> "CREATED";

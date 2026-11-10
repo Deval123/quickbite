@@ -42,6 +42,15 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000  # 5 minutes en ms
+
+  thymeleaf:
+    prefix: classpath:/templates/
+    check-template-existence: false
+
 server:
   port: 8087
 
@@ -57,3 +66,19 @@ management:
       resourceserver:
         jwt:
           issuer-uri: http://localhost:8180/realms/quickbite
+
+# ============================================
+# NOTIFICATION PROVIDERS (Video 13)
+# ============================================
+quickbite:
+  notification:
+    firebase:
+      # En prod : chemin vers le fichier JSON de credentials
+      credentials-path: classpath:firebase-credentials.json
+    twilio:
+      account-sid: ${TWILIO_ACCOUNT_SID:test-sid}
+      auth-token: ${TWILIO_AUTH_TOKEN:test-token}
+      from-number: ${TWILIO_FROM_NUMBER:+33600000000}
+    sendgrid:
+      api-key: ${SENDGRID_API_KEY:test-key}
+      from-email: noreply@quickbite.com

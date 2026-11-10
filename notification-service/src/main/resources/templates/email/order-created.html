@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<h2>Confirmation de commande</h2>
+<p>Bonjour <span th:text="${userName != null ? userName : 'cher client'}">client</span>,</p>
+<p>Votre commande <strong th:text="${orderId}">xxx</strong> a bien ete recue.</p>
+<p>Montant : <strong th:text="${totalAmount != null ? totalAmount + ' EUR' : ''}">0 EUR</strong></p>
+<p>Adresse de livraison : <span th:text="${deliveryAddress != null ? deliveryAddress : ''}">adresse</span></p>
+<p>Nous vous tiendrons informe de chaque etape.</p>
+<p>Merci de votre confiance,<br/>L'equipe QuickBite</p>
+</body>
+</html>
