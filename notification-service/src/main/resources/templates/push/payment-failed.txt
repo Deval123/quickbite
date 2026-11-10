@@ -1,0 +1,1 @@
+Echec du paiement pour ta commande. Reessaie maintenant.

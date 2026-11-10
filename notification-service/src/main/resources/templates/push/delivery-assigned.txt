@@ -1,0 +1,1 @@
+[(${driverName != null ? driverName : 'Un livreur'})] est en route vers le restaurant. ETA : [(${eta != null ? eta : 'bientot'})]

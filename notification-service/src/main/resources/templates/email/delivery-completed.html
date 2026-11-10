@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<h2>Commande livree !</h2>
+<p>Bonjour <span th:text="${userName != null ? userName : 'cher client'}">client</span>,</p>
+<p>Votre commande <strong th:text="${orderId}">xxx</strong> a ete livree avec succes.</p>
+<p>Nous esperons que vous avez apprecie votre repas.</p>
+<p>Laissez un avis pour aider d'autres clients !</p>
+<p>Bon appetit,<br/>L'equipe QuickBite</p>
+</body>
+</html>

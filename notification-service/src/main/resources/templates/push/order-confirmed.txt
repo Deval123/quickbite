@@ -1,0 +1,1 @@
+Le restaurant prepare ta commande ! ETA : [(${eta != null ? eta : 'bientot'})]
