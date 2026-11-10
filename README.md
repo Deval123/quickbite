@@ -16,6 +16,7 @@ Projet pédagogique de construction d'une plateforme de livraison de repas en mi
 - [x] Video 10 : Recherche Elasticsearch (tag `v10.0`)
 - [x] Video 11 : Suivi temps reel - WebSocket + SSE (tag `v11.0`)
 - [x] Video 12 : Geolocalisation - Matching livreur-commande (tag `v12.0`)
+- [x] Video 13 : Notifications - Push, SMS, Email a grande echelle (tag `v13.0`)
 
 ## Architecture
 
@@ -1565,6 +1566,166 @@ delivery-service/
   src/main/java/.../kafka/
     DeliveryEventConsumer.java                    # MODIFIE - integration MatchingService
 ```
+
+---
+
+## Video 13 : Notifications - Push, SMS, Email a grande echelle
+
+### Pre-requis
+
+```bash
+docker compose up -d
+cd notification-service && mvn spring-boot:run
+```
+
+### 13.1 Inserer des preferences de test
+
+```bash
+docker exec -i quickbite-postgres-notification psql -U quickbite -d quickbite-notification -c "
+INSERT INTO user_notification_preference
+  (user_id, push_enabled, sms_enabled, email_enabled, fcm_token, phone_number, email)
+VALUES
+  ('user-0011', true, true, true, 'fcm-token-test-001', '+33612345678', 'thomas@test.com');
+"
+```
+
+### 13.2 Tester un OrderCreatedEvent (declenche email)
+
+```bash
+docker exec -i quickbite-kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic order-events \
+  --property "parse.headers=true" \
+  --property "headers.delimiter=|" \
+  --property "headers.separator=," \
+  --property "parse.key=true" \
+  --property "key.separator=#" \
+  << 'EOF'
+event-type:OrderCreatedEvent|order-test-13#{"userId":"user-0011","restaurantId":"resto-1","totalAmount":24.50,"deliveryAddress":"12 rue de la Paix, Paris","userName":"Thomas"}
+EOF
+```
+
+### 13.3 Verifier les logs
+
+```bash
+# Les logs s'affichent dans le terminal ou tourne "mvn spring-boot:run"
+# Attendu : [EMAIL] Envoye a thomas@test.com | taille=XXX chars
+```
+
+### 13.4 Verifier la table notification_log
+
+```bash
+docker exec -i quickbite-postgres-notification psql -U quickbite -d quickbite-notification -c "
+SELECT channel, event_type, status, error_message, created_at
+FROM notification_log
+ORDER BY created_at DESC
+LIMIT 10;
+"
+```
+
+### 13.5 Tester la deduplication (Redis SET NX)
+
+```bash
+# Renvoyer le meme event -> la 2e fois, le log montre SKIPPED_DEDUP
+# La cle Redis notif:{userId}:{channel}:{eventType}:{orderId} a un TTL de 5 min
+```
+
+### 13.6 Tester un PaymentFailedEvent (haute priorite, override quiet hours)
+
+```bash
+docker exec -i quickbite-kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic payment-events \
+  --property "parse.headers=true" \
+  --property "headers.delimiter=|" \
+  --property "headers.separator=," \
+  --property "parse.key=true" \
+  --property "key.separator=#" \
+  << 'EOF'
+event-type:PaymentFailedEvent|order-test-13#{"userId":"user-001","amount":24.50,"reason":"Card declined"}
+EOF
+```
+
+Attendu dans les logs :
+```
+[PUSH] Envoye a fcm-toke... | message=Echec du paiement...
+[SMS]  Envoye a +33612345678 | message=QuickBite : echec paiement...
+```
+
+### 13.7 Troubleshooting
+
+| Probleme | Cause | Solution |
+|----------|-------|----------|
+| `Connection refused` port 8087 | Service non demarre | `cd notification-service && mvn spring-boot:run` |
+| Pas de notification envoyee | Pas de preferences en base | Inserer les preferences (section 13.1) |
+| `SKIPPED_DEDUP` | Event deja traite | Attendre 5 min (TTL Redis) ou `FLUSHDB` |
+| Template introuvable | Mapping eventType incorrect | Verifier le header `event-type` dans le message Kafka |
+
+### 13.8 Fichiers Video 13
+
+```
+notification-service/
+  pom.xml                                        # MODIFIE - ajout spring-boot-starter-thymeleaf
+  src/main/resources/application.yaml             # MODIFIE - ajout config providers + cache + thymeleaf
+  src/main/resources/db/migration/
+    V3__notification_tables.sql                   # NOUVEAU - tables notification_log + user_notification_preference
+  src/main/resources/templates/
+    push/order-confirmed.txt                      # NOUVEAU - template push
+    push/delivery-assigned.txt                    # NOUVEAU
+    push/order-ready.txt                          # NOUVEAU
+    push/delivery-completed.txt                   # NOUVEAU
+    push/payment-failed.txt                       # NOUVEAU
+    sms/payment-failed.txt                        # NOUVEAU - template SMS
+    sms/order-confirmed.txt                       # NOUVEAU
+    email/order-created.html                      # NOUVEAU - template email HTML
+    email/delivery-completed.html                 # NOUVEAU
+  src/main/java/.../model/
+    NotificationChannel.java                      # NOUVEAU - enum PUSH, SMS, EMAIL
+    NotificationPriority.java                     # NOUVEAU - enum HIGH, NORMAL, LOW
+    Notification.java                             # NOUVEAU - record interne
+    NotificationLog.java                          # NOUVEAU - JPA entity audit
+    UserNotificationPreference.java               # NOUVEAU - JPA entity preferences
+  src/main/java/.../repository/
+    NotificationLogRepository.java                # NOUVEAU
+    UserNotificationPreferenceRepository.java     # NOUVEAU
+  src/main/java/.../service/
+    NotificationSender.java                       # NOUVEAU - interface Strategy Pattern
+    PushNotificationSender.java                   # NOUVEAU - FCM (simule)
+    SmsNotificationSender.java                    # NOUVEAU - Twilio (simule)
+    EmailNotificationSender.java                  # NOUVEAU - SendGrid (simule)
+    DeduplicationService.java                     # NOUVEAU - Redis SET NX, TTL 5 min
+    NotificationTemplateService.java              # NOUVEAU - Thymeleaf par canal + eventType
+    UserPreferenceService.java                    # NOUVEAU - @Cacheable, quiet hours
+    NotificationRouter.java                       # NOUVEAU - cerveau : routing + dedup + preferences + fallback
+  src/main/java/.../kafka/
+    NotificationEventConsumer.java                # MODIFIE - integration NotificationRouter
+```
+
+### Points cles - Architecture Notification
+
+```
+Kafka topics (order, payment, restaurant, delivery events)
+     |
+     v
+NotificationEventConsumer
+     |
+     v
+NotificationRouter (le cerveau)
+  1. resolveRouting(eventType) -> canal(aux) + priorite
+  2. DeduplicationService (Redis SET NX, TTL 5 min)
+  3. UserPreferenceService (canal autorise ? quiet hours ?)
+  4. NotificationTemplateService (Thymeleaf par canal)
+  5. NotificationSender.send() (Strategy Pattern)
+  6. Fallback PUSH -> SMS si HIGH priority
+  7. NotificationLog (audit en base)
+```
+
+- **Strategy Pattern** : une interface, 3 implementations (Push/SMS/Email). Open-Closed.
+- **Deduplication** : Redis SET NX atomique, cle `notif:{userId}:{eventType}:{orderId}`, TTL 5 min
+- **Quiet Hours** : 22h-8h par defaut, overrideable pour priorite HIGH
+- **Fallback** : Push echoue + HIGH priority -> SMS automatique
+- **Templates** : Thymeleaf, 1 template par canal par event type
+- **Providers** : FCM (push), Twilio (SMS), SendGrid (email) - simules avec logs
 
 ---
 
